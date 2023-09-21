@@ -4,4 +4,5 @@
 *.pth
 *.npy
 *.ckpt
+*.pyc
 stargan/__pycache__/
