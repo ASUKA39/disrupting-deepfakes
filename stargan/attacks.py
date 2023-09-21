@@ -1,6 +1,10 @@
 import copy
 import numpy as np
-from collections import Iterable
+# from collections import Iterable
+try:
+    from collections.abc import Iterable
+except ImportError:
+    from collections import Iterable
 from scipy.stats import truncnorm
 
 import torch
