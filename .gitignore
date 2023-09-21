@@ -4,3 +4,4 @@
 *.pth
 *.npy
 *.ckpt
+stargan/__pycache__/
