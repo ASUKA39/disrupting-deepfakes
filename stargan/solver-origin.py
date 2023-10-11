@@ -8,9 +8,8 @@ import numpy as np
 import os
 import time
 import datetime
-
-import attacks_fft_numpy as attacks
 # import attacks
+import attacks_fft_ang as attacks
 # import attacks_fft_map as attacks
 
 from PIL import ImageFilter
@@ -80,7 +79,6 @@ class Solver(object):
 
         # Build the model and tensorboard.
         self.build_model()
-        self.build_adv_model()
         if self.use_tensorboard:
             self.build_tensorboard()
 
@@ -89,7 +87,7 @@ class Solver(object):
         if self.dataset in ['CelebA', 'RaFD']:
             self.G = Generator(self.g_conv_dim, self.c_dim, self.g_repeat_num)
             # self.G = AvgBlurGenerator(self.g_conv_dim, self.c_dim, self.g_repeat_num)
-            self.D = Discriminator(self.image_size, self.d_conv_dim, self.c_dim, self.d_repeat_num)
+            self.D = Discriminator(self.image_size, self.d_conv_dim, self.c_dim, self.d_repeat_num) 
         elif self.dataset in ['Both']:
             self.G = Generator(self.g_conv_dim, self.c_dim+self.c2_dim+2, self.g_repeat_num)   # 2 for mask vector.
             self.D = Discriminator(self.image_size, self.d_conv_dim, self.c_dim+self.c2_dim, self.d_repeat_num)
@@ -98,26 +96,9 @@ class Solver(object):
         self.d_optimizer = torch.optim.Adam(self.D.parameters(), self.d_lr, [self.beta1, self.beta2])
         self.print_network(self.G, 'G')
         self.print_network(self.D, 'D')
-
+            
         self.G.to(self.device)
         self.D.to(self.device)
-
-    def build_adv_model(self):
-        """Create a adversarial generator and a adversarial discriminator."""
-        if self.dataset in ['CelebA', 'RaFD']:
-            self.adv_G = Generator(self.g_conv_dim, self.c_dim, self.g_repeat_num)
-            self.adv_D = Discriminator(self.image_size, self.d_conv_dim, self.c_dim, self.d_repeat_num)
-        elif self.dataset in ['Both']:
-            self.adv_G = Generator(self.g_conv_dim, self.c_dim+self.c2_dim+2, self.g_repeat_num)   # 2 for mask vector.
-            self.adv_D = Discriminator(self.image_size, self.d_conv_dim, self.c_dim+self.c2_dim, self.d_repeat_num)
-        
-        self.g_optimizer2 = torch.optim.Adam(self.adv_G.parameters(), self.g_lr, [self.beta1, self.beta2])
-        self.d_optimizer2 = torch.optim.Adam(self.adv_D.parameters(), self.d_lr, [self.beta1, self.beta2])
-        self.print_network(self.adv_G, 'adv_G')
-        self.print_network(self.adv_D, 'adv_D')
-
-        self.adv_G.to(self.device)
-        self.adv_D.to(self.device)
 
     def print_network(self, model, name):
         """Print out the network information."""
@@ -128,32 +109,21 @@ class Solver(object):
         print(name)
         print("The number of parameters: {}".format(num_params))
 
-    def restore_model(self, resume_iters):#设置路径并load G和D的参数
+    def restore_model(self, resume_iters):
         """Restore the trained generator and discriminator."""
         print('Loading the trained models from step {}...'.format(resume_iters))
         G_path = os.path.join(self.model_save_dir, '{}-G.ckpt'.format(resume_iters))
         D_path = os.path.join(self.model_save_dir, '{}-D.ckpt'.format(resume_iters))
-
+        
         # self.G.load_state_dict(torch.load(G_path, map_location=lambda storage, loc: storage))
         self.load_model_weights(self.G, G_path)
         self.D.load_state_dict(torch.load(D_path, map_location=lambda storage, loc: storage))
 
-    def restore_adv_model(self, resume_iters):
-        """Restore the trained adversarial generator and discriminator."""
-        print('Loading the trained adversarial models from step {}...'.format(resume_iters))
-        adv_G_path = os.path.join(self.model_save_dir, '{}-adv-G.ckpt'.format(resume_iters))
-        adv_D_path = os.path.join(self.model_save_dir, '{}-adv-D.ckpt'.format(resume_iters))
-
-        self.load_model_weights(self.adv_G, adv_G_path)
-        self.adv_D.load_state_dict(torch.load(adv_D_path, map_location=lambda storage, loc: storage))
-
-
-####
     def build_and_restore_alt_model(self):
         """Create a generator and a discriminator."""
         if self.dataset in ['CelebA', 'RaFD']:
             self.G2 = Generator(self.g_conv_dim, self.c_dim, self.g_repeat_num)
-            self.D2 = Discriminator(self.image_size, self.d_conv_dim, self.c_dim, self.d_repeat_num)
+            self.D2 = Discriminator(self.image_size, self.d_conv_dim, self.c_dim, self.d_repeat_num) 
         elif self.dataset in ['Both']:
             self.G2 = Generator(self.g_conv_dim, self.c_dim+self.c2_dim+2, self.g_repeat_num)   # 2 for mask vector.
             self.D2 = Discriminator(self.image_size, self.d_conv_dim, self.c_dim+self.c2_dim, self.d_repeat_num)
@@ -162,7 +132,7 @@ class Solver(object):
         self.d_optimizer2 = torch.optim.Adam(self.D2.parameters(), self.d_lr, [self.beta1, self.beta2])
         self.print_network(self.G2, 'G')
         self.print_network(self.D2, 'D')
-
+            
         self.G2.to(self.device)
         self.D2.to(self.device)
         """Restore the trained generator and discriminator."""
@@ -171,12 +141,11 @@ class Solver(object):
         print('Loading the trained models from step {}...'.format(resume_iters))
         G_path = os.path.join(model_save_dir, '{}-G.ckpt'.format(resume_iters))
         D_path = os.path.join(model_save_dir, '{}-D.ckpt'.format(resume_iters))
-
+        
         # self.G.load_state_dict(torch.load(G_path, map_location=lambda storage, loc: storage))
         self.load_model_weights(self.G2, G_path)
         self.D2.load_state_dict(torch.load(D_path, map_location=lambda storage, loc: storage))
 
-####
     def load_model_weights(self, model, path):
         pretrained_dict = torch.load(path, map_location=lambda storage, loc: storage)
         model_dict = model.state_dict()
@@ -184,7 +153,7 @@ class Solver(object):
         # 1. filter out unnecessary keys
         pretrained_dict = {k: v for k, v in pretrained_dict.items() if 'preprocessing' not in k}
         # 2. overwrite entries in the existing state dict
-        model_dict.update(pretrained_dict)
+        model_dict.update(pretrained_dict) 
         # 3. load the new state dict
         model.load_state_dict(pretrained_dict, strict=False)
 
@@ -353,11 +322,11 @@ class Solver(object):
             loss['D/loss_fake'] = d_loss_fake.item()
             loss['D/loss_cls'] = d_loss_cls.item()
             loss['D/loss_gp'] = d_loss_gp.item()
-
+            
             # =================================================================================== #
             #                               3. Train the generator                                #
             # =================================================================================== #
-
+            
             if (i+1) % self.n_critic == 0:
                 x_fake, _ = self.G(x_real, c_trg)     # No Attack
                 out_src, out_cls = self.D(x_fake)
@@ -422,8 +391,7 @@ class Solver(object):
                 d_lr -= (self.d_lr / float(self.num_iters_decay))
                 self.update_lr(g_lr, d_lr)
                 print ('Decayed learning rates, g_lr: {}, d_lr: {}.'.format(g_lr, d_lr))
-
-####
+    
     def train_adv_gen(self):
         """Adversarial Training for StarGAN only for Generator, within a single dataset."""
         # Set data loader.
@@ -514,7 +482,7 @@ class Solver(object):
             loss['D/loss_fake'] = d_loss_fake.item()
             loss['D/loss_cls'] = d_loss_cls.item()
             loss['D/loss_gp'] = d_loss_gp.item()
-
+            
             # =================================================================================== #
             #                               3. Train the generator                                #
             # =================================================================================== #
@@ -522,7 +490,7 @@ class Solver(object):
             # Black image
             black = np.zeros((x_real.shape[0],3,256,256))
             black = torch.FloatTensor(black).to(self.device)
-
+            
             if (i+1) % self.n_critic == 0:
                 # Original-to-target domain.
                 pgd_attack = attacks.LinfPGDAttack(model=self.G, device=self.device, feat=None)
@@ -593,7 +561,6 @@ class Solver(object):
                 self.update_lr(g_lr, d_lr)
                 print ('Decayed learning rates, g_lr: {}, d_lr: {}.'.format(g_lr, d_lr))
 
-####
     def train_adv_both(self):
         """G+D Adversarial Training for StarGAN with both Discriminator and Generator, within a single dataset."""
         # Set data loader.
@@ -691,11 +658,11 @@ class Solver(object):
             loss['D/loss_fake'] = d_loss_fake.item()
             loss['D/loss_cls'] = d_loss_cls.item()
             loss['D/loss_gp'] = d_loss_gp.item()
-
+            
             # =================================================================================== #
             #                               3. Train the generator                                #
             # =================================================================================== #
-
+            
             if (i+1) % self.n_critic == 0:
                 # Original-to-target domain
                 x_fake, _ = self.G(x_real_adv, c_trg)   # Attack
@@ -764,7 +731,7 @@ class Solver(object):
                 print ('Decayed learning rates, g_lr: {}, d_lr: {}.'.format(g_lr, d_lr))
 
     def train_multi(self):
-        """Vanilla Training for StarGAN with multiple datasets."""
+        """Vanilla Training for StarGAN with multiple datasets."""        
         # Data iterators.
         celeba_iter = iter(self.celeba_loader)
         rafd_iter = iter(self.rafd_loader)
@@ -798,10 +765,10 @@ class Solver(object):
                 # =================================================================================== #
                 #                             1. Preprocess input data                                #
                 # =================================================================================== #
-
+                
                 # Fetch real images and labels.
                 data_iter = celeba_iter if dataset == 'CelebA' else rafd_iter
-
+                
                 try:
                     x_real, label_org = next(data_iter)
                 except:
@@ -870,7 +837,7 @@ class Solver(object):
                 loss['D/loss_fake'] = d_loss_fake.item()
                 loss['D/loss_cls'] = d_loss_cls.item()
                 loss['D/loss_gp'] = d_loss_gp.item()
-
+            
                 # =================================================================================== #
                 #                               3. Train the generator                                #
                 # =================================================================================== #
@@ -949,13 +916,13 @@ class Solver(object):
         """Translate images using StarGAN trained on a single dataset. No attack."""
         # Load the trained generator.
         self.restore_model(self.test_iters)
-
+        
         # Set data loader.
         if self.dataset == 'CelebA':
             data_loader = self.celeba_loader
         elif self.dataset == 'RaFD':
             data_loader = self.rafd_loader
-
+        
         with torch.no_grad():
             for i, (x_real, c_org) in enumerate(data_loader):
 
@@ -966,7 +933,7 @@ class Solver(object):
                 # Translate images.
                 x_fake_list = [x_real]
                 for c_trg in c_trg_list:
-                    x_fake_list.append(self.G(x_real, c_trg)[0])
+                    x_fake_list.append(self.G(x_real, c_trg))
 
                 # Save the translated images.
                 x_concat = torch.cat(x_fake_list, dim=3)
@@ -974,13 +941,14 @@ class Solver(object):
                 save_image(self.denorm(x_concat.data.cpu()), result_path, nrow=1, padding=0)
                 print('Saved real and fake images into {}...'.format(result_path))
 
-####
+    
+
     def test_attack(self):
         """Vanilla or blur attacks."""
 
         # Load the trained generator.
         self.restore_model(self.test_iters)
-
+        
         # Set data loader.
         if self.dataset == 'CelebA':
             data_loader = self.celeba_loader
@@ -991,7 +959,7 @@ class Solver(object):
         l1_error, l2_error, min_dist, l0_error = 0.0, 0.0, 0.0, 0.0
         n_dist, n_samples = 0, 0
 
-        for i, (x_real, c_org) in enumerate(data_loader):#外层循环，遍历照片
+        for i, (x_real, c_org) in enumerate(data_loader):
             # Prepare input images and target domain labels.
             x_real = x_real.to(self.device)
             c_trg_list = self.create_labels(c_org, self.c_dim, self.dataset, self.selected_attrs)
@@ -1000,8 +968,8 @@ class Solver(object):
 
             # Translated images.
             x_fake_list = [x_real]
-
-            for idx, c_trg in enumerate(c_trg_list):#内层循环，遍历属性
+            
+            for idx, c_trg in enumerate(c_trg_list):
                 print('image', i, 'class', idx)
                 with torch.no_grad():
                     x_real_mod = x_real
@@ -1015,7 +983,14 @@ class Solver(object):
                 # x_adv, perturb = pgd_attack.perturb_blur_eot(x_real, gen_noattack, c_trg)               # EoT blur adaptation
 
                 # Generate adversarial example
+                # print(torch.max(perturb))
+                # print(torch.max(x_real))
+                print(perturb.size())
+                print(perturb[0, 0].size())
+                perturb = torch.rot90(perturb, k=2, dims=[2, 3])
                 x_adv = x_real + perturb
+                # print(torch.max(x_real), torch.max(x_adv), end = '\n')
+                # x_adv = torch.clamp(x_adv, min=-1, max=1).detach_()
 
                 # No attack
                 # x_adv = x_real
@@ -1024,12 +999,14 @@ class Solver(object):
 
                 # Metrics
                 with torch.no_grad():
-                    gen, _ = self.adv_G(x_adv.float(), c_trg)
+                    gen, _ = self.G(x_adv, c_trg)
 
                     # Add to lists
                     # x_fake_list.append(blurred_image)
                     x_fake_list.append(x_adv)
-                    # x_fake_list.append(perturb)
+                    x_fake_list.append(perturb)
+                    # x_fake_list.append(perturb*100)
+                    x_fake_list.append(gen_noattack)
                     x_fake_list.append(gen)
 
                     l1_error += F.l1_loss(gen, gen_noattack)
@@ -1046,13 +1023,12 @@ class Solver(object):
             save_image(self.denorm(x_concat.data.cpu()), result_path, nrow=1, padding=0)
             if i == 49:     # stop after this many images
                 break
-
+        
         # Print metrics
-        print('{} images. L1 error: {}. L2 error: {}. prop_dist: {}. L0 error: {}. L_-inf error: {}.'.format(n_samples,
+        print('{} images. L1 error: {}. L2 error: {}. prop_dist: {}. L0 error: {}. L_-inf error: {}.'.format(n_samples, 
         l1_error / n_samples, l2_error / n_samples, float(n_dist) / n_samples, l0_error / n_samples, min_dist / n_samples))
 
-####
-    '''def test_attack_feats(self):
+    def test_attack_feats(self):
         """Feature-level attacks"""
 
         # Mapping of feature layers to indices
@@ -1061,7 +1037,7 @@ class Solver(object):
         for layer_num_orig in range(12):    # 11 layers + output
             # Load the trained generator.
             self.restore_model(self.test_iters)
-
+            
             # Set data loader.
             if self.dataset == 'CelebA':
                 data_loader = self.celeba_loader
@@ -1094,7 +1070,7 @@ class Solver(object):
                         x_adv, perturb = pgd_attack.perturb(x_real, gen_noattack, c_trg)
                     else:
                         x_adv, perturb = pgd_attack.perturb(x_real, gen_noattack_feats[layer_num], c_trg)
-
+                        
                     x_adv = x_real + perturb
 
                     # Metrics
@@ -1119,17 +1095,16 @@ class Solver(object):
                 save_image(self.denorm(x_concat.data.cpu()), result_path, nrow=1, padding=0)
                 if i == 49:
                     break
-
+            
             # Print metrics
-            print('{} images. L1 error: {}. L2 error: {}. prop_dist: {}. L0 error: {}. L_-inf error: {}.'.format(n_samples,
-            l1_error / n_samples, l2_error / n_samples, float(n_dist) / n_samples, l0_error / n_samples, min_dist / n_samples))'''
+            print('{} images. L1 error: {}. L2 error: {}. prop_dist: {}. L0 error: {}. L_-inf error: {}.'.format(n_samples, 
+            l1_error / n_samples, l2_error / n_samples, float(n_dist) / n_samples, l0_error / n_samples, min_dist / n_samples))
 
-####
     def test_attack_cond(self):
         """Class conditional transfer"""
         # Load the trained generator.
         self.restore_model(self.test_iters)
-
+        
         # Set data loader.
         if self.dataset == 'CelebA':
             data_loader = self.celeba_loader
@@ -1149,7 +1124,7 @@ class Solver(object):
 
             # Translate images.
             x_fake_list = [x_real]
-
+            
             for idx, c_trg in enumerate(c_trg_list):
                 print(i, idx)
                 with torch.no_grad():
@@ -1166,7 +1141,7 @@ class Solver(object):
 
                     # Iterative Class Conditional
                     # x_adv, perturb = pgd_attack.perturb_iter_class(x_real, gen_noattack, c_trg_list)
-
+                    
                 # Correct Class
                 # x_adv, perturb = pgd_attack.perturb(x_real, gen_noattack, c_trg)
 
@@ -1195,16 +1170,16 @@ class Solver(object):
             save_image(self.denorm(x_concat.data.cpu()), result_path, nrow=1, padding=0)
             if i == 49:
                 break
-
+        
         # Print metrics
-        print('{} images. L1 error: {}. L2 error: {}. prop_dist: {}. L0 error: {}. L_-inf error: {}.'.format(n_samples,
+        print('{} images. L1 error: {}. L2 error: {}. prop_dist: {}. L0 error: {}. L_-inf error: {}.'.format(n_samples, 
         l1_error / n_samples, l2_error / n_samples, float(n_dist) / n_samples, l0_error / n_samples, min_dist / n_samples))
 
     def test_multi(self):
         """Translate images using StarGAN trained on multiple datasets."""
         # Load the trained generator.
         self.restore_model(self.test_iters)
-
+        
         with torch.no_grad():
             for i, (x_real, c_org) in enumerate(self.celeba_loader):
 
@@ -1232,312 +1207,7 @@ class Solver(object):
                 save_image(self.denorm(x_concat.data.cpu()), result_path, nrow=1, padding=0)
                 print('Saved real and fake images into {}...'.format(result_path))
 
-####用来进行高斯模糊/平均模糊
     def blur_tensor(self, tensor):
         # preproc = smoothing.AverageSmoothing2D(channels=3, kernel_size=9).to(self.device)
-        preproc = smoothing.GaussianSmoothing2D(sigma=0.5, channels=3, kernel_size=3).to(self.device)
+        preproc = smoothing.GaussianSmoothing2D(sigma=1.5, channels=3, kernel_size=11).to(self.device)
         return preproc(tensor)
-
-    # 滤波
-    def compute_luminance_weight(self, X, scale):
-        """
-        X: (1,3,256,256)Tensor数组
-        Return: (1,3,256,256)Tensor数组
-        """
-        # arg
-        # sigmoid_scale = 40
-        sigmoid_scale = scale
-
-        # luminance = 0.299R + 0.587G + 0.114B
-        # 用RGB到灰度转换公式计算luminance
-        luminance = 0.299 * X[:, 0, :, :] + 0.587 * X[:, 1, :, :] + 0.114 * X[:, 2, :, :]
-
-        # Normalize
-        luminance = (luminance - luminance.min()) / (luminance.max() - luminance.min())
-
-        # Use sigmoid to map luminance to a weight.
-        weight = torch.sigmoid(sigmoid_scale * (luminance - 0.5))
-
-        return weight
-
-    def perturb_with_luminance(self, X, adversarial_noise, scale):
-        """
-        X: (1,3,256,256)Tensor数组
-        adversarial_noise: 原始对抗样本
-        
-        Returns: 调整后的对抗样本
-        """
-        luminance_weight = self.compute_luminance_weight(X, scale)
-        luminance_weight = luminance_weight.unsqueeze(1)  # Add channel dimension
-
-        adjusted_noise = adversarial_noise * luminance_weight
-
-        return adjusted_noise
-
-    def test_attack_adv(self):
-        """Adversarial Attack Used Normal Model And Adversarial Model."""
-
-        # Load the trained generator.
-        self.restore_model(self.test_iters)
-        self.restore_adv_model(self.test_iters)
-
-        # Set data loader.
-        if self.dataset == 'CelebA':
-            data_loader = self.celeba_loader
-        elif self.dataset == 'RaFD':
-            data_loader = self.rafd_loader
-
-        # Initialize Metrics
-        l1_error, l2_error, min_dist, l0_error = 0.0, 0.0, 0.0, 0.0
-        n_dist, n_samples = 0, 0
-
-        for i, (x_real, c_org) in enumerate(data_loader):#外层循环，遍历照片
-            # Prepare input images and target domain labels.
-            x_real = x_real.to(self.device)
-            c_trg_list = self.create_labels(c_org, self.c_dim, self.dataset, self.selected_attrs)
-
-            pgd_attack = attacks.LinfPGDAttack(model=self.G, device=self.device, feat=None)
-            pgd_adv_attack = attacks.LinfPGDAttack(model=self.G, device=self.device, feat=None, adv_model=self.adv_G)
-
-
-            pgd_adv_amp_attack = attacks.LinfPGDAttack(model=self.G, device=self.device, feat=None, adv_model=self.adv_G,fft_mode='amp',fft_center=30,fft_protect=False)
-            pgd_adv_ang_attack = attacks.LinfPGDAttack(model=self.G, device=self.device, feat=None, adv_model=self.adv_G,fft_mode='ang',fft_center=30,fft_protect=False)
-
-            # pgd_adv_attack = attacks.LinfPGDAttack(model=self.G, device=self.device, feat=None)
-            # Translated images.
-            
-            x_fake_list = [x_real]
-            Add_adv = 0
-
-            for idx, c_trg in enumerate(c_trg_list):#内层循环，遍历属性
-                print('image', i, 'class', idx)
-                with torch.no_grad():
-                    x_real_mod = x_real
-                    # x_real_mod = self.blur_tensor(x_real_mod) # use blur
-                    gen_noattack, gen_noattack_feats = self.G(x_real_mod, c_trg)#生成正确伪造
-                    adv_gen_noattack, adv_gen_noattack_feats = self.adv_G(x_real_mod, c_trg)#用鲁棒模型生成正确伪造
-
-                # Attacks
-                # x_adv, perturb_nom = pgd_attack.perturb(x_real, gen_noattack, c_trg)#普通模型生成对抗样本                     # Vanilla attack
-                # x_adv, perturb_adv = pgd_adv_attack.perturb_combine(x_real, gen_noattack, c_trg)#鲁棒模型和普通模型联合生成对抗样本
-
-                # x_adv, perturb = pgd_attack.perturb(x_real, gen_noattack, c_trg)
-
-                x_adv, amp_perturb = pgd_adv_amp_attack.perturb(x_real,gen_noattack,c_trg)
-                x_adv, ang_perturb = pgd_adv_ang_attack.perturb(x_real,gen_noattack,c_trg)
-
-                ang_perturb = ang_perturb.rot90(k=2,dims=[1,2])
-                # perturb = perturb_adv
-                # Generate adversarial example
-                # x_adv = x_real + perturb + perturb_adv#生成对抗后图片
-
-                # x_adv = x_real + perturb_adv+0.5*perturb
-              
-                # tensity
-                amp_tensity = 10
-                ang_tensity = 0
-                perturb = amp_tensity * amp_perturb + ang_tensity * ang_perturb
-                perturb = self.perturb_with_luminance(x_real, perturb, 10)
-                # 尝试对噪声高斯模糊
-                # perturb = self.blur_tensor(perturb)
-                # 尝试将噪声转换为灰度图
-                # perturb[:, 0, :, :] = perturb[:, 1, :, :] = perturb[:, 2, :, :]  = 0.299 * perturb[:, 0, :, :] + 0.587 * perturb[:, 1, :, :] + 0.114 * perturb[:, 2, :, :]
-                # perturb = self.perturb_with_luminance(x_real, perturb, 0)
-                
-                x_adv = x_real + perturb
-
-                # No attack
-                # x_adv = x_real
-
-                # x_adv = self.blur_tensor(x_adv)   # use blur
-
-                # Metrics
-                with torch.no_grad():
-                    gen, _ = self.G(x_adv, c_trg)   # 生成对抗后伪造输出
-
-                    # Add to lists
-                    if Add_adv == 0 :
-                        x_fake_list.append(x_adv)
-                        x_fake_list.append(perturb*1000)
-                        Add_adv = 1
-                    # x_fake_list.append(blurred_image)
-                    # x_fake_list.append(x_adv)
-                    # x_fake_list.append(perturb)
-                    x_fake_list.append(gen_noattack)
-                    x_fake_list.append(gen)
-
-                    l1_error += F.l1_loss(gen, gen_noattack)
-                    l2_error += F.mse_loss(gen, gen_noattack)
-                    l0_error += (gen - gen_noattack).norm(0)
-                    min_dist += (gen - gen_noattack).norm(float('-inf'))#计算各项损失参数
-                    if F.mse_loss(gen, gen_noattack) > 0.05:
-                        n_dist += 1
-                    n_samples += 1
-
-            # Save the translated images.
-            x_concat = torch.cat(x_fake_list, dim=3)
-            result_path = os.path.join(self.result_dir, '{}-images.jpg'.format(i+1))
-            save_image(self.denorm(x_concat.data.cpu()), result_path, nrow=1, padding=0)
-            if i == 49:     # stop after this many images
-                break
-
-        # Print metrics
-        print('{} images. L1 error: {}. L2 error: {}. prop_dist: {}. L0 error: {}. L_-inf error: {}.'.format(n_samples,
-        l1_error / n_samples, l2_error / n_samples, float(n_dist) / n_samples, l0_error / n_samples, min_dist / n_samples))
-
-    def test_attack_deepfool(self):
-        """Test Deepfool adversarial attack"""
-
-        # Load the trained generator.
-        self.restore_model(self.test_iters)
-        self.restore_adv_model(self.test_iters)
-
-        # Set data loader.
-        if self.dataset == 'CelebA':
-            data_loader = self.celeba_loader
-        elif self.dataset == 'RaFD':
-            data_loader = self.rafd_loader
-
-        # Initialize Metrics
-        l1_error, l2_error, min_dist, l0_error = 0.0, 0.0, 0.0, 0.0
-        n_dist, n_samples = 0, 0
-
-        for i, (x_real, c_org) in enumerate(data_loader):#外层循环，遍历照片
-            # Prepare input images and target domain labels.
-            x_real = x_real.to(self.device)
-            c_trg_list = self.create_labels(c_org, self.c_dim, self.dataset, self.selected_attrs)
-
-            pgd_attack = attacks.LinfPGDAttack(model=self.G, device=self.device, feat=None)
-
-            # Translated images.
-            x_fake_list = [x_real]
-
-            for idx, c_trg in enumerate(c_trg_list):#内层循环，遍历属性
-                print('image', i, 'class', idx)
-                with torch.no_grad():
-                    x_real_mod = x_real
-                    # x_real_mod = self.blur_tensor(x_real_mod) # use blur
-                    gen_noattack, gen_noattack_feats = self.G(x_real_mod, c_trg)#生成正确伪造
-
-                # Attacks
-                x_adv, perturb = pgd_attack.perturb_deepfool2(x_real, gen_noattack, c_trg)
-                
-
-                perturb = perturb
-                # Generate adversarial example
-                x_adv = x_real + perturb#生成对抗后图片
-
-                # No attack
-                # x_adv = x_real
-
-                # x_adv = self.blur_tensor(x_adv)   # use blur
-
-                # Metrics
-                with torch.no_grad():
-                    gen, _ = self.G(x_adv, c_trg)#生成对抗后伪造输出
-
-                    # Add to lists
-                    # x_fake_list.append(blurred_image)
-                    x_fake_list.append(x_adv)
-                    # x_fake_list.append(perturb)
-                    x_fake_list.append(gen)
-
-                    l1_error += F.l1_loss(gen, gen_noattack)
-                    l2_error += F.mse_loss(gen, gen_noattack)
-                    l0_error += (gen - gen_noattack).norm(0)
-                    min_dist += (gen - gen_noattack).norm(float('-inf'))#计算各项损失参数
-                    if F.mse_loss(gen, gen_noattack) > 0.05:
-                        n_dist += 1
-                    n_samples += 1
-
-            # Save the translated images.
-            x_concat = torch.cat(x_fake_list, dim=3)
-            result_path = os.path.join(self.result_dir, '{}-images.jpg'.format(i+1))
-            save_image(self.denorm(x_concat.data.cpu()), result_path, nrow=1, padding=0)
-            if i == 49:     # stop after this many images
-                break
-
-        # Print metrics
-        print('{} images. L1 error: {}. L2 error: {}. prop_dist: {}. L0 error: {}. L_-inf error: {}.'.format(n_samples,
-        l1_error / n_samples, l2_error / n_samples, float(n_dist) / n_samples, l0_error / n_samples, min_dist / n_samples))
-
-    def test_attack_nullifying(self):
-        """Adversarial Nullifying Attack Used Normal Model And Adversarial Model."""
-
-        # Load the trained generator.
-        self.restore_model(self.test_iters)
-        self.restore_adv_model(self.test_iters)
-
-        # Set data loader.
-        if self.dataset == 'CelebA':
-            data_loader = self.celeba_loader
-        elif self.dataset == 'RaFD':
-            data_loader = self.rafd_loader
-
-        # Initialize Metrics
-        l1_error, l2_error, min_dist, l0_error = 0.0, 0.0, 0.0, 0.0
-        n_dist, n_samples = 0, 0
-
-        for i, (x_real, c_org) in enumerate(data_loader):#外层循环，遍历照片
-            # Prepare input images and target domain labels.
-            x_real = x_real.to(self.device)
-            c_trg_list = self.create_labels(c_org, self.c_dim, self.dataset, self.selected_attrs)
-
-            pgd_attack = attacks.LinfPGDAttack(model=self.G, device=self.device, feat=None)
-            pgd_adv_attack = attacks.LinfPGDAttack(model=self.G, device=self.device, feat=None, adv_model=self.adv_G)
-
-            # Translated images.
-            x_fake_list = [x_real]
-            Add_adv = 0
-
-            for idx, c_trg in enumerate(c_trg_list):    # 内层循环，遍历属性
-                print('image', i, 'class', idx)
-                with torch.no_grad():
-                    x_real_mod = x_real
-                    # x_real_mod = self.blur_tensor(x_real_mod) # use blur
-                    gen_noattack, gen_noattack_feats = self.G(x_real_mod, c_trg)    # 生成正确伪造
-                    adv_gen_noattack, adv_gen_noattack_feats = self.adv_G(x_real_mod, c_trg)    # 用鲁棒模型生成正确伪造
-
-                # Attacks
-                # x_adv, perturb_nom = pgd_attack.perturb(x_real, gen_noattack, c_trg)  # 普通模型生成对抗样本                     # Vanilla attack
-                x_adv, perturb_adv = pgd_adv_attack.perturb_combine_nullifying(x_real, gen_noattack, c_trg) # 鲁棒模型和普通模型联合生成对抗样本
-                perturb = perturb_adv
-                # Generate adversarial example
-                x_adv = x_real + perturb    # 生成对抗后图片
-
-                # No attack
-                # x_adv = x_real
-
-                # x_adv = self.blur_tensor(x_adv)   # use blur
-
-                # Metrics
-                with torch.no_grad():
-                    gen, _ = self.G(x_adv, c_trg) # 生成对抗后伪造输出
-
-                    # Add to lists
-                    if Add_adv == 0 :
-                        x_fake_list.append(x_adv)
-                        Add_adv = 1
-                    # x_fake_list.append(blurred_image)
-                    #x_fake_list.append(x_adv)
-                    x_fake_list.append(perturb)
-                    x_fake_list.append(gen)
-
-                    l1_error += F.l1_loss(gen, x_real_mod)
-                    l2_error += F.mse_loss(gen, x_real_mod)
-                    l0_error += (gen - x_real_mod).norm(0)
-                    min_dist += (gen - x_real_mod).norm(float('-inf')) # 计算各项损失参数
-                    if F.mse_loss(gen, x_real_mod) < 0.05:
-                        n_dist += 1
-                    n_samples += 1
-
-            # Save the translated images.
-            x_concat = torch.cat(x_fake_list, dim=3)
-            result_path = os.path.join(self.result_dir, '{}-images.jpg'.format(i+1))
-            save_image(self.denorm(x_concat.data.cpu()), result_path, nrow=1, padding=0)
-            if i == 49:     # stop after this many images
-                break
-
-        # Print metrics
-        print('{} images. L1 error: {}. L2 error: {}. prop_dist: {}. L0 error: {}. L_-inf error: {}.'.format(n_samples,
-        l1_error / n_samples, l2_error / n_samples, float(n_dist) / n_samples, l0_error / n_samples, min_dist / n_samples))

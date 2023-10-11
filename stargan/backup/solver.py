@@ -10,8 +10,11 @@ import time
 import datetime
 
 import attacks_fft_numpy as attacks
+# import attacks_fft_numpy_fft as attacks
+
 # import attacks
-# import attacks_fft_map as attacks
+from pytorch_msssim import ssim
+
 
 from PIL import ImageFilter
 from PIL import Image
@@ -110,7 +113,7 @@ class Solver(object):
         elif self.dataset in ['Both']:
             self.adv_G = Generator(self.g_conv_dim, self.c_dim+self.c2_dim+2, self.g_repeat_num)   # 2 for mask vector.
             self.adv_D = Discriminator(self.image_size, self.d_conv_dim, self.c_dim+self.c2_dim, self.d_repeat_num)
-        
+
         self.g_optimizer2 = torch.optim.Adam(self.adv_G.parameters(), self.g_lr, [self.beta1, self.beta2])
         self.d_optimizer2 = torch.optim.Adam(self.adv_D.parameters(), self.d_lr, [self.beta1, self.beta2])
         self.print_network(self.adv_G, 'adv_G')
@@ -146,7 +149,6 @@ class Solver(object):
 
         self.load_model_weights(self.adv_G, adv_G_path)
         self.adv_D.load_state_dict(torch.load(adv_D_path, map_location=lambda storage, loc: storage))
-
 
 ####
     def build_and_restore_alt_model(self):
@@ -1235,18 +1237,107 @@ class Solver(object):
 ####用来进行高斯模糊/平均模糊
     def blur_tensor(self, tensor):
         # preproc = smoothing.AverageSmoothing2D(channels=3, kernel_size=9).to(self.device)
-        preproc = smoothing.GaussianSmoothing2D(sigma=0.5, channels=3, kernel_size=3).to(self.device)
+        preproc = smoothing.GaussianSmoothing2D(sigma=1.5, channels=3, kernel_size=11).to(self.device)
         return preproc(tensor)
 
-    # 滤波
-    def compute_luminance_weight(self, X, scale):
+        # 三通道傅立叶变换
+
+    def fft(self, channels):
+        '''
+        channles: (1,3,256,256)的tensor数组
+        return: (1,3,256,256)的tensor数组
+        '''
+
+        channels_ = [channels[0][0], channels[0][1], channels[0][2]]
+        fchannels = []
+        for i in range(3):
+            channel = torch.fft.fft2(channels_[i])
+            fchannels.append(torch.fft.fftshift(channel))
+
+        f = torch.stack(fchannels,0)
+        f = f.reshape(1,3,256,256)
+        return f
+
+    def get_amp_ang(self, X):
+        '''
+        X: (1,3,256,256)tensor数组
+        return: 2*(1,3,256,256)的tensor.cuda数组
+        '''
+
+        _fft = self.fft(X)
+        amp = []
+        ang = []
+        for i in range(3):
+            amp.append(torch.abs(_fft[0][i]))
+            ang.append(torch.angle(_fft[0][i]))
+
+        _ang = torch.stack(ang,0)
+        _amp = torch.stack(amp,0)
+
+        _ang = torch.unsqueeze(_ang,0)
+        _amp = torch.unsqueeze(_amp,0)
+        return _amp,_ang
+
+        # 加噪复原
+
+    def recover(self, amp, ang):
+        '''
+        amp,ang:两个(1,3,256,256)tensor.cuda数组
+        return: (1,3,256,256)tensor
+        '''
+        _re = []
+        for i in range(3):
+            re = torch.complex(amp[0][i] * torch.cos(ang[0][i]), (amp[0][i])* torch.sin(ang[0][i]))
+            re = torch.fft.ifftshift(re)
+            re = torch.fft.ifft2(re)
+            re = torch.real(re)
+
+            _re.append(re)
+        #torch.tensor(X)).to(torch.float32).cuda(), (torch.tensor(per * 100)).to(torch.float32).cuda()
+
+        re = torch.stack(_re,0)
+        re = torch.unsqueeze(re,0)
+
+        return re
+
+    def protect(self,now,backup,_range):
+        rows, cols = now[0][0].shape
+
+        row, col = rows // 2, cols // 2
+
+        for i in range(3):
+            now[0][i][row - _range:row + _range - 1, col - _range:col + _range -1] = backup[0][i][row - _range:row + _range - 1,
+                                                                            col - _range:col + _range - 1]
+        return now
+
+    def recover_fft(self,amp,ang,backup,center):
+        amp_backup,ang_backup = self.get_amp_ang(backup)
+        amp = self.protect(amp,amp_backup,center // 2)
+        ang = self.protect(ang,ang_backup,center // 2)
+
+        _re = []
+        for i in range(3):
+            re = torch.complex(amp[0][i] * torch.cos(ang[0][i]), (amp[0][i])* torch.sin(ang[0][i]))
+            re = torch.fft.ifftshift(re)
+            re = torch.fft.ifft2(re)
+            re = torch.real(re)
+
+            _re.append(re)
+        #torch.tensor(X)).to(torch.float32).cuda(), (torch.tensor(per * 100)).to(torch.float32).cuda()
+
+        re = torch.stack(_re,0)
+        re = torch.unsqueeze(re,0)
+
+        return re
+
+    def compute_luminance_weight(self, X):
         """
         X: (1,3,256,256)Tensor数组
         Return: (1,3,256,256)Tensor数组
         """
-        # arg
-        # sigmoid_scale = 40
-        sigmoid_scale = scale
+
+        #arg
+        sigmoid_scale = 35
 
         # luminance = 0.299R + 0.587G + 0.114B
         # 用RGB到灰度转换公式计算luminance
@@ -1260,25 +1351,31 @@ class Solver(object):
 
         return weight
 
-    def perturb_with_luminance(self, X, adversarial_noise, scale):
+    def perturb_with_luminance(self, X, adversarial_noise):
         """
         X: (1,3,256,256)Tensor数组
         adversarial_noise: 原始对抗样本
         
         Returns: 调整后的对抗样本
         """
-        luminance_weight = self.compute_luminance_weight(X, scale)
+        luminance_weight = self.compute_luminance_weight(X)
         luminance_weight = luminance_weight.unsqueeze(1)  # Add channel dimension
 
         adjusted_noise = adversarial_noise * luminance_weight
 
         return adjusted_noise
 
+    def psnr(self, img1, img2, max_val=1.0):
+        mse = torch.mean((img1 - img2) ** 2)
+        if mse == 0:
+            return float('inf')
+        return 20 * torch.log10(max_val / torch.sqrt(mse))
+
     def test_attack_adv(self):
         """Adversarial Attack Used Normal Model And Adversarial Model."""
 
-        # Load the trained generator.
-        self.restore_model(self.test_iters)
+        # Load the trained generator.11111
+        # self.restore_model(self.test_iters)
         self.restore_adv_model(self.test_iters)
 
         # Set data loader.
@@ -1291,6 +1388,13 @@ class Solver(object):
         l1_error, l2_error, min_dist, l0_error = 0.0, 0.0, 0.0, 0.0
         n_dist, n_samples = 0, 0
 
+        patch_l1_error = 0.0
+        patch_l2_error = 0.0
+        patch_l1_amp_error =0.0
+        patch_l2_amp_error = 0.0
+        patch_l1_ang_error = 0.0
+        patch_l2_ang_error = 0.0
+
         for i, (x_real, c_org) in enumerate(data_loader):#外层循环，遍历照片
             # Prepare input images and target domain labels.
             x_real = x_real.to(self.device)
@@ -1300,14 +1404,16 @@ class Solver(object):
             pgd_adv_attack = attacks.LinfPGDAttack(model=self.G, device=self.device, feat=None, adv_model=self.adv_G)
 
 
-            pgd_adv_amp_attack = attacks.LinfPGDAttack(model=self.G, device=self.device, feat=None, adv_model=self.adv_G,fft_mode='amp',fft_center=30,fft_protect=False)
-            pgd_adv_ang_attack = attacks.LinfPGDAttack(model=self.G, device=self.device, feat=None, adv_model=self.adv_G,fft_mode='ang',fft_center=30,fft_protect=False)
+            pgd_adv_amp_attack = attacks.LinfPGDAttack(model=self.G, device=self.device, feat=None, adv_model=self.adv_G,fft_mode='amp',fft_center=254,fft_protect=False)
+            pgd_adv_ang_attack = attacks.LinfPGDAttack(model=self.G, device=self.device, feat=None, adv_model=self.adv_G,fft_mode='ang',fft_center=254,fft_protect=False)
 
             # pgd_adv_attack = attacks.LinfPGDAttack(model=self.G, device=self.device, feat=None)
             # Translated images.
-            
+
             x_fake_list = [x_real]
+
             Add_adv = 0
+            Add_noise = 0
 
             for idx, c_trg in enumerate(c_trg_list):#内层循环，遍历属性
                 print('image', i, 'class', idx)
@@ -1323,28 +1429,45 @@ class Solver(object):
 
                 # x_adv, perturb = pgd_attack.perturb(x_real, gen_noattack, c_trg)
 
-                x_adv, amp_perturb = pgd_adv_amp_attack.perturb(x_real,gen_noattack,c_trg)
-                x_adv, ang_perturb = pgd_adv_ang_attack.perturb(x_real,gen_noattack,c_trg)
+                x_adv,amp_perturb = pgd_adv_amp_attack.perturb(x_real,gen_noattack,c_trg)
+                x_adv,ang_perturb = pgd_adv_ang_attack.perturb(x_real,gen_noattack,c_trg)
 
                 ang_perturb = ang_perturb.rot90(k=2,dims=[1,2])
-                # perturb = perturb_adv
-                # Generate adversarial example
-                # x_adv = x_real + perturb + perturb_adv#生成对抗后图片
 
-                # x_adv = x_real + perturb_adv+0.5*perturb
-              
-                # tensity
-                amp_tensity = 10
+                #********************还原为图像噪声再相加**************************************************************************
+                amp_tensity = 1
                 ang_tensity = 0
-                perturb = amp_tensity * amp_perturb + ang_tensity * ang_perturb
-                perturb = self.perturb_with_luminance(x_real, perturb, 10)
-                # 尝试对噪声高斯模糊
-                # perturb = self.blur_tensor(perturb)
-                # 尝试将噪声转换为灰度图
-                # perturb[:, 0, :, :] = perturb[:, 1, :, :] = perturb[:, 2, :, :]  = 0.299 * perturb[:, 0, :, :] + 0.587 * perturb[:, 1, :, :] + 0.114 * perturb[:, 2, :, :]
-                # perturb = self.perturb_with_luminance(x_real, perturb, 0)
-                
-                x_adv = x_real + perturb
+
+                # 原始对抗样本
+                perturb_total = amp_tensity * amp_perturb + ang_tensity * ang_perturb
+
+                perturb_total = self.perturb_with_luminance(x_real, perturb_total)
+                x_adv = x_real + perturb_total
+
+                x_adv_amp,x_adv_ang = self.get_amp_ang(x_adv)
+                x_real_amp,x_real_ang = self.get_amp_ang(x_real)
+
+
+                #************************************************************************************************************************
+
+
+                #******************振幅噪声直接相加再还原图像********************************************************************************************
+                # x_real_amp,x_real_ang = self.get_amp_ang(x_real)
+                # amp_tensity = 0.01
+
+                # ang_tensity = 0
+
+                # amp_perturb_total = amp_tensity * amp_perturb  #ang_tensity * ang_perturb 
+                # ang_perturb_total = ang_tensity * ang_perturb
+
+                # perturb_total = amp_perturb_total + ang_perturb_total
+
+                # x_adv = (self.recover_fft(x_real_amp + amp_perturb_total ,x_real_ang + ang_perturb_total,x_real,0))
+
+                # x_adv_amp,x_adv_ang = self.get_amp_ang(x_adv)
+
+
+                #********************************************************************************************************************************
 
                 # No attack
                 # x_adv = x_real
@@ -1352,24 +1475,49 @@ class Solver(object):
                 # x_adv = self.blur_tensor(x_adv)   # use blur
 
                 # Metrics
+                # #图片质量ssim
+                # ssim_values = []
+                # ssim_value = ssim(x_real, x_adv, data_range=1.0)
+                # print("SSIM:", ssim_value.item())
+                # ssim_values.append(ssim_value.item())
+
+                # #PSNR
+                # psnr_values = []
+                # psnr_value = self.psnr(x_real, x_adv)
+                # print("PSNR:", psnr_value.item())
+                # psnr_values.append(psnr_value.item())
+
                 with torch.no_grad():
-                    gen, _ = self.G(x_adv, c_trg)   # 生成对抗后伪造输出
+                    gen, _ = self.adv_G(x_adv, c_trg)#生成对抗后伪造输出
 
                     # Add to lists
                     if Add_adv == 0 :
                         x_fake_list.append(x_adv)
-                        x_fake_list.append(perturb*1000)
                         Add_adv = 1
+
+                    if Add_noise == 0:
+                        x_fake_list.append(perturb_total.reshape(1,3,256,256))
+                        Add_noise = 1
+
                     # x_fake_list.append(blurred_image)
-                    # x_fake_list.append(x_adv)
-                    # x_fake_list.append(perturb)
-                    x_fake_list.append(gen_noattack)
+                    #x_fake_list.append(x_adv)
+                    #x_fake_list.append(perturb)
                     x_fake_list.append(gen)
 
                     l1_error += F.l1_loss(gen, gen_noattack)
                     l2_error += F.mse_loss(gen, gen_noattack)
                     l0_error += (gen - gen_noattack).norm(0)
                     min_dist += (gen - gen_noattack).norm(float('-inf'))#计算各项损失参数
+
+                    patch_l1_error += F.l1_loss(x_real,x_adv)
+                    patch_l2_error += F.mse_loss(x_real,x_adv)
+
+                    patch_l1_amp_error += F.l1_loss(x_real_amp,x_adv_amp)
+                    patch_l2_amp_error += F.mse_loss(x_real_amp,x_adv_amp)
+
+                    patch_l1_ang_error += F.l1_loss(x_real_ang,x_adv_ang)
+                    patch_l2_ang_error += F.mse_loss(x_real_ang,x_adv_ang)
+
                     if F.mse_loss(gen, gen_noattack) > 0.05:
                         n_dist += 1
                     n_samples += 1
@@ -1382,8 +1530,14 @@ class Solver(object):
                 break
 
         # Print metrics
-        print('{} images. L1 error: {}. L2 error: {}. prop_dist: {}. L0 error: {}. L_-inf error: {}.'.format(n_samples,
-        l1_error / n_samples, l2_error / n_samples, float(n_dist) / n_samples, l0_error / n_samples, min_dist / n_samples))
+        print('{} images. L1 error: {}. L2 error: {}. prop_dist: {}. L0 error: {}. L_-inf error: {}.'
+              .format(n_samples,l1_error / n_samples, l2_error / n_samples,float(n_dist) / n_samples, l0_error / n_samples, min_dist / n_samples))
+        print('adv_error: patch_L1 error: {}. patch_L2 error: {}. patch_L1_amp_error: {}. patch_L2_amp_error: {}. '
+              'patch_L1_ang_error: {}. patch_L2_ang_error: {}.'
+              .format(patch_l1_error / n_samples,patch_l2_error / n_samples, patch_l1_amp_error / n_samples, patch_l2_amp_error / n_samples, patch_l1_ang_error / n_samples, patch_l2_ang_error / n_samples))
+        print('Ne:{}.'.format(l2_error / patch_l2_error))
+        # print('Average SSIM: {}. Average PSNR: {}. '.format(np.mean(ssim_values), np.mean(psnr_values)))
+
 
     def test_attack_deepfool(self):
         """Test Deepfool adversarial attack"""
@@ -1421,7 +1575,7 @@ class Solver(object):
 
                 # Attacks
                 x_adv, perturb = pgd_attack.perturb_deepfool2(x_real, gen_noattack, c_trg)
-                
+
 
                 perturb = perturb
                 # Generate adversarial example
@@ -1488,22 +1642,22 @@ class Solver(object):
 
             # Translated images.
             x_fake_list = [x_real]
-            Add_adv = 0
+            Add_adv=0
 
-            for idx, c_trg in enumerate(c_trg_list):    # 内层循环，遍历属性
+            for idx, c_trg in enumerate(c_trg_list):#内层循环，遍历属性
                 print('image', i, 'class', idx)
                 with torch.no_grad():
                     x_real_mod = x_real
                     # x_real_mod = self.blur_tensor(x_real_mod) # use blur
-                    gen_noattack, gen_noattack_feats = self.G(x_real_mod, c_trg)    # 生成正确伪造
-                    adv_gen_noattack, adv_gen_noattack_feats = self.adv_G(x_real_mod, c_trg)    # 用鲁棒模型生成正确伪造
+                    gen_noattack, gen_noattack_feats = self.G(x_real_mod, c_trg)#生成正确伪造
+                    adv_gen_noattack, adv_gen_noattack_feats = self.adv_G(x_real_mod, c_trg)#用鲁棒模型生成正确伪造
 
                 # Attacks
-                # x_adv, perturb_nom = pgd_attack.perturb(x_real, gen_noattack, c_trg)  # 普通模型生成对抗样本                     # Vanilla attack
-                x_adv, perturb_adv = pgd_adv_attack.perturb_combine_nullifying(x_real, gen_noattack, c_trg) # 鲁棒模型和普通模型联合生成对抗样本
+                #x_adv, perturb_nom = pgd_attack.perturb(x_real, gen_noattack, c_trg)#普通模型生成对抗样本                     # Vanilla attack
+                x_adv, perturb_adv = pgd_adv_attack.perturb_combine_nullifying(x_real, gen_noattack, c_trg)#鲁棒模型和普通模型联合生成对抗样本
                 perturb = perturb_adv
                 # Generate adversarial example
-                x_adv = x_real + perturb    # 生成对抗后图片
+                x_adv = x_real + perturb#生成对抗后图片
 
                 # No attack
                 # x_adv = x_real
@@ -1512,7 +1666,7 @@ class Solver(object):
 
                 # Metrics
                 with torch.no_grad():
-                    gen, _ = self.G(x_adv, c_trg) # 生成对抗后伪造输出
+                    gen, _ = self.G(x_adv, c_trg)#生成对抗后伪造输出
 
                     # Add to lists
                     if Add_adv == 0 :
@@ -1520,13 +1674,13 @@ class Solver(object):
                         Add_adv = 1
                     # x_fake_list.append(blurred_image)
                     #x_fake_list.append(x_adv)
-                    x_fake_list.append(perturb)
+                    #x_fake_list.append(perturb)
                     x_fake_list.append(gen)
 
                     l1_error += F.l1_loss(gen, x_real_mod)
                     l2_error += F.mse_loss(gen, x_real_mod)
                     l0_error += (gen - x_real_mod).norm(0)
-                    min_dist += (gen - x_real_mod).norm(float('-inf')) # 计算各项损失参数
+                    min_dist += (gen - x_real_mod).norm(float('-inf'))#计算各项损失参数
                     if F.mse_loss(gen, x_real_mod) < 0.05:
                         n_dist += 1
                     n_samples += 1

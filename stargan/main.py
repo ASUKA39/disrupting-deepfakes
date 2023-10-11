@@ -53,12 +53,17 @@ def main(config):
         if config.dataset in ['CelebA', 'RaFD']:
             # Normal inference
             # solver.test()
+
             # Attack inference
-            solver.test_attack()
+            # solver.test_attack()
+
             # Feature attack experiment
             # solver.test_attack_feats()
+
             # Conditional attack experiment
             # solver.test_attack_cond()
+
+            solver.test_attack_adv()
         elif config.dataset in ['Both']:
             solver.test_multi()
 

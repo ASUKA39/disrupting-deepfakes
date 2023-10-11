@@ -105,8 +105,7 @@ class LinfPGDAttack(object):
         Vanilla Attack.
         """
         if self.rand:
-            X = X_nat.clone().detach_() + torch.tensor(
-                np.random.uniform(-self.epsilon, self.epsilon, X_nat.shape).astype('float32')).to(self.device)
+            X = X_nat.clone().detach_() + torch.tensor(np.random.uniform(-self.epsilon, self.epsilon, X_nat.shape).astype('float32')).to(self.device)
         else:
             X = X_nat.clone().detach_()
             # use the following if FGSM or I-FGSM and random seeds are fixed
@@ -186,7 +185,7 @@ class LinfPGDAttack(object):
         per = per.reshape(1,3,256,256)
         # return X, (per * 100)
         # 噪声强度
-        strg= 1
+        strg = 1
         return (torch.tensor(X)).to(torch.float32).cuda(), (torch.tensor(per * strg)).to(torch.float32).cuda()
 
     def perturb_blur(self, X_nat, y, c_trg):
